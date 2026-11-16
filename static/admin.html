@@ -1,0 +1,139 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Attendance Admin</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 14px 40px; background: radial-gradient(circle at top, #1b2340, #070a14 70%) fixed;
+    color: #eef2ff; font-family: system-ui, 'Segoe UI', sans-serif; min-height: 100vh; }
+  main { max-width: 900px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+  h1 { margin: 0; font-size: 1.5rem; } h1 span { color: #facc15; }
+  a.btn, button.btn { padding: 10px 16px; border: 0; border-radius: 12px; font-weight: 600; cursor: pointer; color: #fff;
+    text-decoration: none; font-size: .9rem; background: linear-gradient(135deg, #6366f1, #22d3ee); }
+  a.btn.alt { background: rgba(255,255,255,.1); }
+  .panel { padding: 18px; border-radius: 22px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); margin-bottom: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr) 150px; gap: 12px; align-items: center; }
+  @media (max-width: 640px) { .stats { grid-template-columns: repeat(3, 1fr); } .donut { grid-column: 1 / -1; margin: auto; } }
+  .stat { padding: 14px; border-radius: 16px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); animation: rise .6s both; }
+  .stat small { color: #9aa6c7; text-transform: uppercase; font-size: .7rem; letter-spacing: .05em; }
+  .stat p { margin: 4px 0 0; font-size: 2rem; font-weight: 800; }
+  .p { color: #34d399; } .l { color: #fbbf24; } .a { color: #fb7185; }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+  .donut { width: 130px; height: 130px; border-radius: 50%; display: grid; place-items: center; transition: background .6s;
+    background: conic-gradient(#334155 0 100%); }
+  .donut div { width: 82px; height: 82px; border-radius: 50%; background: #0d1224; display: grid; place-items: center; text-align: center; font-size: .75rem; color: #9aa6c7; }
+  .donut b { display: block; font-size: 1.3rem; color: #fff; }
+  form { display: flex; gap: 10px; flex-wrap: wrap; }
+  input { flex: 1; min-width: 180px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.15);
+    background: rgba(255,255,255,.07); color: #fff; font-size: 1rem; outline: none; }
+  input:focus { border-color: #818cf8; }
+  .err { color: #fda4af; font-size: .85rem; margin: 8px 0 0; min-height: 1em; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  li { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: 14px; background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08); animation: rise .5s both; }
+  li .name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li .time { color: #9aa6c7; font-size: .8rem; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+  .badge.present { background: rgba(16,185,129,.2); color: #34d399; }
+  .badge.late { background: rgba(245,158,11,.2); color: #fbbf24; }
+  .badge.absent { background: rgba(244,63,94,.2); color: #fb7185; }
+  .mini { padding: 6px 10px; border: 0; border-radius: 9px; background: rgba(255,255,255,.1); color: #fff; cursor: pointer; font-size: .78rem; text-decoration: none; }
+  .mini:hover { background: rgba(255,255,255,.2); } .mini.del:hover { background: rgba(244,63,94,.4); }
+  h2 { margin: 0 0 12px; font-size: 1rem; color: #9aa6c7; font-weight: 600; }
+  .empty { color: #9aa6c7; text-align: center; padding: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Attendance <span>Admin</span></h1>
+    <div><a class="btn alt" href="/">Scanner</a> <a class="btn" href="/api/report.csv">Export CSV</a></div>
+  </header>
+
+  <section class="panel">
+    <div class="stats">
+      <div class="stat"><small>Present</small><p class="p" id="cp">0</p></div>
+      <div class="stat" style="animation-delay:.1s"><small>Late</small><p class="l" id="cl">0</p></div>
+      <div class="stat" style="animation-delay:.2s"><small>Absent</small><p class="a" id="ca">0</p></div>
+      <div class="donut" id="donut"><div><span><b id="pct">0%</b>attended</span></div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Add student</h2>
+    <form id="form">
+      <input id="name" placeholder="Full name" maxlength="80" required />
+      <button class="btn">Add</button>
+    </form>
+    <p class="err" id="err"></p>
+  </section>
+
+  <section class="panel">
+    <h2 id="title">Today</h2>
+    <ul id="list"></ul>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+let codes = {}
+
+async function json(url, opts) {
+  const r = await fetch(url, opts)
+  const d = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(d.error || 'Request failed')
+  return d
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag)
+  if (cls) e.className = cls
+  if (text !== undefined) e.textContent = text
+  return e
+}
+
+async function load() {
+  const [students, today] = await Promise.all([json('/api/students'), json('/api/today')])
+  codes = Object.fromEntries(students.map((s) => [s.id, s.code]))
+  const c = today.counts, total = c.present + c.late + c.absent
+  $('cp').textContent = c.present; $('cl').textContent = c.late; $('ca').textContent = c.absent
+  $('title').textContent = 'Today (' + today.day + ')'
+  const attended = c.present + c.late
+  $('pct').textContent = total ? Math.round((attended / total) * 100) + '%' : '0%'
+  const a = total ? (c.present / total) * 100 : 0, b = total ? a + (c.late / total) * 100 : 0
+  $('donut').style.background = total
+    ? 'conic-gradient(#34d399 0 ' + a + '%, #fbbf24 ' + a + '% ' + b + '%, #fb7185 ' + b + '% 100%)'
+    : 'conic-gradient(#334155 0 100%)'
+
+  const list = $('list'); list.innerHTML = ''
+  if (!today.people.length) { list.append(el('li', 'empty', 'No students yet. Add one above.')); return }
+  today.people.forEach((p, i) => {
+    const li = el('li'); li.style.animationDelay = Math.min(i, 10) * 40 + 'ms'
+    li.append(el('span', 'name', p.name))
+    if (p.time) li.append(el('span', 'time', p.time))
+    li.append(el('span', 'badge ' + p.status, p.status))
+    const qr = el('a', 'mini', 'QR'); qr.href = '/qr/' + codes[p.id] + '.png'; qr.target = '_blank'
+    const dl = el('a', 'mini', 'Save'); dl.href = '/qr/' + codes[p.id] + '.png'; dl.download = p.name.replace(/\W+/g, '_') + '.png'
+    const del = el('button', 'mini del', 'Delete')
+    del.onclick = async () => {
+      if (!confirm('Delete ' + p.name + ' and their records?')) return
+      await json('/api/students/' + p.id, { method: 'DELETE' }); load()
+    }
+    li.append(qr, dl, del); list.append(li)
+  })
+}
+
+$('form').onsubmit = async (e) => {
+  e.preventDefault(); $('err').textContent = ''
+  try {
+    await json('/api/students', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: $('name').value }) })
+    $('name').value = ''; load()
+  } catch (err) { $('err').textContent = err.message }
+}
+
+load(); setInterval(load, 10000)
+</script>
+</body>
+</html>

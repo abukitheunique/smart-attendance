@@ -3,7 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import qrcode
-from flask import Flask, Response, g, jsonify, request, send_file
+from flask import Flask, Response, g, jsonify, request, send_file, send_from_directory
 
 TZ = ZoneInfo(os.environ.get("TZ_NAME", "Africa/Addis_Ababa"))
 LATE_AFTER = os.environ.get("LATE_AFTER", "09:15")
@@ -147,5 +147,16 @@ def report():
     )
 
 
+@app.get("/")
+def kiosk():
+    return send_from_directory("static", "index.html")
+
+
+@app.get("/admin")
+def admin():
+    return send_from_directory("static", "admin.html")
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
