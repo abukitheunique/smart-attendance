@@ -1,0 +1,133 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Attendance Scanner</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+    background: radial-gradient(circle at top, #1b2340, #070a14 70%); color: #eef2ff;
+    font-family: system-ui, 'Segoe UI', sans-serif; }
+  .card { width: 100%; max-width: 460px; padding: 22px; border-radius: 26px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    box-shadow: 0 30px 80px rgba(0,0,0,.45); }
+  h1 { margin: 0 0 4px; font-size: 1.5rem; }
+  h1 span { color: #facc15; }
+  p.sub { margin: 0 0 16px; color: #9aa6c7; font-size: .9rem; }
+  .view { position: relative; border-radius: 18px; overflow: hidden; background: #000; aspect-ratio: 1; }
+  video { width: 100%; height: 100%; object-fit: cover; }
+  .frame { position: absolute; inset: 14%; pointer-events: none; }
+  .frame i { position: absolute; width: 34px; height: 34px; border: 4px solid #facc15; }
+  .frame i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 10px; }
+  .frame i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 10px; }
+  .frame i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 10px; }
+  .frame i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 10px; }
+  .line { position: absolute; left: 14%; right: 14%; height: 3px; background: #22d3ee;
+    box-shadow: 0 0 16px #22d3ee; animation: scan 2.2s ease-in-out infinite; }
+  @keyframes scan { 0%,100% { top: 14%; } 50% { top: 84%; } }
+  .result { margin-top: 16px; min-height: 92px; padding: 16px; border-radius: 16px; text-align: center;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); transition: all .3s; }
+  .result.show { animation: pop .5s cubic-bezier(.2,1.4,.4,1); }
+  @keyframes pop { from { transform: scale(.85); opacity: 0; } }
+  .result.ok { background: rgba(16,185,129,.18); border-color: #10b981; }
+  .result.late { background: rgba(245,158,11,.18); border-color: #f59e0b; }
+  .result.dup { background: rgba(99,102,241,.2); border-color: #818cf8; }
+  .result.err { background: rgba(244,63,94,.2); border-color: #f43f5e; }
+  .result b { display: block; font-size: 1.25rem; margin-bottom: 4px; }
+  .msg { color: #9aa6c7; font-size: .85rem; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; font-size: .8rem; color: #9aa6c7; }
+  a { color: #22d3ee; text-decoration: none; }
+  button { padding: 8px 14px; border: 0; border-radius: 10px; background: rgba(255,255,255,.1); color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>Smart <span>Attendance</span></h1>
+  <p class="sub">Hold your QR code in front of the camera.</p>
+  <div class="view">
+    <video id="video" playsinline muted></video>
+    <div class="frame"><i></i><i></i><i></i><i></i></div>
+    <div class="line"></div>
+  </div>
+  <div id="result" class="result"><span class="msg" id="status">Starting camera...</span></div>
+  <div class="row"><span id="clock"></span><span><button id="flip">Switch camera</button> <a href="/admin">Admin</a></span></div>
+</main>
+<canvas id="canvas" hidden></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script>
+const video = document.getElementById('video')
+const canvas = document.getElementById('canvas')
+const ctx = canvas.getContext('2d', { willReadFrequently: true })
+const result = document.getElementById('result')
+let facing = 'environment', stream = null, lastCode = '', lastAt = 0, busy = false
+
+function beep(freq) {
+  try {
+    const a = new (window.AudioContext || window.webkitAudioContext)()
+    const o = a.createOscillator(), g = a.createGain()
+    o.frequency.value = freq; g.gain.value = 0.15
+    o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.15)
+  } catch (e) {}
+}
+
+function show(cls, title, text) {
+  result.className = 'result show ' + cls
+  result.innerHTML = ''
+  const b = document.createElement('b'); b.textContent = title
+  const s = document.createElement('span'); s.className = 'msg'; s.textContent = text
+  result.append(b, s)
+  setTimeout(() => result.classList.remove('show'), 600)
+}
+
+async function start() {
+  if (stream) stream.getTracks().forEach((t) => t.stop())
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false })
+    video.srcObject = stream
+    await video.play()
+    document.getElementById('status').textContent = 'Ready. Show a QR code.'
+    requestAnimationFrame(tick)
+  } catch (e) {
+    show('err', 'Camera unavailable', 'Allow camera access. It works on localhost or https only.')
+  }
+}
+
+async function handle(code) {
+  busy = true
+  try {
+    const r = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
+    const d = await r.json()
+    if (!r.ok) { beep(220); show('err', 'Unknown code', d.error || 'Not registered') }
+    else if (d.already) { beep(440); show('dup', d.name, 'Already marked at ' + d.time + ' (' + d.status + ')') }
+    else if (d.status === 'late') { beep(520); show('late', d.name, 'Marked LATE at ' + d.time) }
+    else { beep(880); show('ok', d.name, 'Attendance marked at ' + d.time) }
+  } catch (e) {
+    show('err', 'Server error', 'Could not reach the server')
+  }
+  busy = false
+}
+
+function tick() {
+  if (video.readyState === video.HAVE_ENOUGH_DATA && !busy) {
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight
+    ctx.drawImage(video, 0, 0)
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const q = jsQR(img.data, img.width, img.height)
+    if (q && q.data) {
+      const now = Date.now()
+      if (q.data !== lastCode || now - lastAt > 4000) {
+        lastCode = q.data; lastAt = now
+        handle(q.data.trim())
+      }
+    }
+  }
+  requestAnimationFrame(tick)
+}
+
+document.getElementById('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; start() }
+setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString() }, 1000)
+start()
+</script>
+</body>
+</html>
