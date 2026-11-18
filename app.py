@@ -3,13 +3,19 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import qrcode
-from flask import Flask, Response, g, jsonify, request, send_file, send_from_directory
+from flask import Flask, Response, g, jsonify, redirect, request, send_file, send_from_directory, session
 
 TZ = ZoneInfo(os.environ.get("TZ_NAME", "Africa/Addis_Ababa"))
 LATE_AFTER = os.environ.get("LATE_AFTER", "09:15")
 DB = os.environ.get("DB_PATH", "attendance.db")
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=None)
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
+)
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 
 def db():
@@ -161,6 +167,41 @@ import faces
 
 faces.register(app, db, DB, TZ, LATE_AFTER)
 
+PUBLIC = {"/", "/face", "/login", "/api/scan", "/api/face-scan", "/api/health", "/api/login"}
+
+
+@app.before_request
+def guard():
+    if request.path in PUBLIC or session.get("admin"):
+        return None
+    if request.path.startswith(("/api/", "/qr/")):
+        return jsonify(error="Login required"), 401
+    return redirect("/login")
+
+
+@app.post("/api/login")
+def login():
+    import time
+    if not ADMIN_PASSWORD:
+        return jsonify(error="ADMIN_PASSWORD is not set on the server"), 503
+    pw = str((request.json or {}).get("password", ""))
+    if not secrets.compare_digest(pw.encode(), ADMIN_PASSWORD.encode()):
+        time.sleep(1)
+        return jsonify(error="Wrong password"), 401
+    session["admin"] = True
+    return jsonify(ok=True)
+
+
+@app.post("/api/logout")
+def logout():
+    session.clear()
+    return jsonify(ok=True)
+
+
+@app.get("/login")
+def login_page():
+    return send_from_directory("static", "login.html")
+
 
 @app.get("/face")
 def face_kiosk():
@@ -174,5 +215,6 @@ def enroll_page():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
