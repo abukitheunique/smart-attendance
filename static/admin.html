@@ -121,7 +121,7 @@ async function load() {
       if (!confirm('Delete ' + p.name + ' and their records?')) return
       await json('/api/students/' + p.id, { method: 'DELETE' }); load()
     }
-    li.append(qr, dl, del); list.append(li)
+    const fc = el('a', 'mini', 'Face'); fc.href = '/enroll?id=' + p.id + '&name=' + encodeURIComponent(p.name); li.append(qr, dl, fc, del); list.append(li)
   })
 }
 
@@ -137,3 +137,4 @@ load(); setInterval(load, 10000)
 </script>
 </body>
 </html>
+
