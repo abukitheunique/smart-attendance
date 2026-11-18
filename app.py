@@ -157,6 +157,22 @@ def admin():
     return send_from_directory("static", "admin.html")
 
 
+import faces
+
+faces.register(app, db, DB, TZ, LATE_AFTER)
+
+
+@app.get("/face")
+def face_kiosk():
+    return send_from_directory("static", "face.html")
+
+
+@app.get("/enroll")
+def enroll_page():
+    return send_from_directory("static", "enroll.html")
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 

@@ -1,0 +1,95 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Face Attendance</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+    background: radial-gradient(circle at top, #1b2340, #070a14 70%); color: #eef2ff; font-family: system-ui, 'Segoe UI', sans-serif; }
+  .card { width: 100%; max-width: 460px; padding: 22px; border-radius: 26px; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.12); box-shadow: 0 30px 80px rgba(0,0,0,.45); }
+  h1 { margin: 0 0 4px; font-size: 1.5rem; } h1 span { color: #facc15; }
+  .sub { margin: 0 0 16px; color: #9aa6c7; font-size: .9rem; }
+  .view { position: relative; border-radius: 18px; overflow: hidden; background: #000; aspect-ratio: 4/3; }
+  video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  .frame { position: absolute; inset: 14% 24%; pointer-events: none; }
+  .frame i { position: absolute; width: 34px; height: 34px; border: 4px solid #facc15; }
+  .frame i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 10px; }
+  .frame i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 10px; }
+  .frame i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 10px; }
+  .frame i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 10px; }
+  .result { margin-top: 16px; min-height: 92px; padding: 16px; border-radius: 16px; text-align: center;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); transition: all .3s; }
+  .result.show { animation: pop .5s cubic-bezier(.2,1.4,.4,1); }
+  @keyframes pop { from { transform: scale(.85); opacity: 0; } }
+  .result.ok { background: rgba(16,185,129,.18); border-color: #10b981; }
+  .result.late { background: rgba(245,158,11,.18); border-color: #f59e0b; }
+  .result.dup { background: rgba(99,102,241,.2); border-color: #818cf8; }
+  .result.err { background: rgba(244,63,94,.2); border-color: #f43f5e; }
+  .result b { display: block; font-size: 1.25rem; margin-bottom: 4px; }
+  .msg { color: #9aa6c7; font-size: .85rem; }
+  .row { display: flex; justify-content: space-between; margin-top: 14px; font-size: .85rem; }
+  a { color: #22d3ee; text-decoration: none; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>Face <span>Attendance</span></h1>
+  <p class="sub">Look at the camera. Your attendance is marked automatically.</p>
+  <div class="view"><video id="video" playsinline muted></video><div class="frame"><i></i><i></i><i></i><i></i></div></div>
+  <div id="result" class="result"><span class="msg" id="status">Starting camera...</span></div>
+  <div class="row"><a href="/">QR scanner</a><a href="/admin">Admin</a></div>
+</main>
+<script>
+const video = document.getElementById('video'), result = document.getElementById('result')
+const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d')
+let busy = false, lastName = '', lastAt = 0
+
+function beep(freq) {
+  try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain()
+    o.frequency.value = freq; g.gain.value = 0.15; o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.15) } catch (e) {}
+}
+function show(cls, title, text) {
+  result.className = 'result show ' + cls; result.innerHTML = ''
+  const b = document.createElement('b'); b.textContent = title
+  const s = document.createElement('span'); s.className = 'msg'; s.textContent = text
+  result.append(b, s); setTimeout(() => result.classList.remove('show'), 600)
+}
+
+function handle(d) {
+  if (d.match) {
+    const now = Date.now(), repeat = d.name === lastName && now - lastAt < 6000
+    lastName = d.name; lastAt = now
+    if (repeat) return
+    if (d.already) { beep(440); show('dup', d.name, 'Already marked at ' + d.time + ' (' + d.status + ')') }
+    else if (d.status === 'late') { beep(520); show('late', d.name, 'Marked LATE at ' + d.time) }
+    else { beep(880); show('ok', d.name, 'Attendance marked at ' + d.time) }
+  } else if (d.reason === 'notrained') show('err', 'No faces enrolled', 'Enroll students from the admin page first.')
+  else if (d.reason === 'unknown') show('err', 'Face not recognized', 'Try better light or enroll again.')
+  else if (Date.now() - lastAt > 3000) { result.className = 'result'; result.innerHTML = '<span class="msg">Looking for a face...</span>' }
+}
+
+async function loop() {
+  if (!busy && video.readyState >= 2) {
+    busy = true
+    canvas.width = 480; canvas.height = Math.round(480 * video.videoHeight / video.videoWidth)
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    try {
+      const r = await fetch('/api/face-scan', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: canvas.toDataURL('image/jpeg', 0.8) }) })
+      handle(await r.json())
+    } catch (e) { show('err', 'Server error', 'Could not reach the server') }
+    busy = false
+  }
+  setTimeout(loop, 700)
+}
+
+navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 }, audio: false })
+  .then((s) => { video.srcObject = s; return video.play() })
+  .then(() => { document.getElementById('status').textContent = 'Ready. Look at the camera.'; loop() })
+  .catch(() => show('err', 'Camera unavailable', 'Allow camera access (localhost or https only).'))
+</script>
+</body>
+</html>
