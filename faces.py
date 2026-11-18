@@ -9,6 +9,8 @@ THRESHOLD = float(os.environ.get("FACE_THRESHOLD", "70"))
 MAX_SAMPLES = 40
 cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 _model = {"sig": None, "rec": None}
+if cascade.empty():
+    raise RuntimeError("Face detector file failed to load. Install opencv-contrib-python-headless<5")
 
 
 def decode(data_url):
@@ -119,3 +121,4 @@ def register(app, db, db_path, tz, late_after):
             return jsonify(match=False, reason="unknown")
         already, t, status = mark(sid)
         return jsonify(match=True, name=s["name"], time=t, status=status, already=already, confidence=round(conf))
+
