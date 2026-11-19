@@ -10,9 +10,12 @@ ROLES = {"teacher", "subdirector"}
 OTP_TTL, OTP_TRIES, OTP_GAP = 600, 5, 60
 HASH = "pbkdf2:sha256"
 
-PUBLIC = {"/", "/face", "/login", "/signup", "/auth.css", "/api/login", "/api/health",
-          "/api/signup/request", "/api/signup/verify", "/api/scan", "/api/face-scan"}
+PUBLIC = {"/", "/login", "/signup", "/auth.css", "/api/login", "/api/health",
+          "/api/signup/request", "/api/signup/verify", "/api/scan"}
 AUTHED = {"/pending", "/api/me", "/api/logout"}
+MANAGER_EXACT = {"/dashboard", "/enroll", "/face", "/api/students", "/api/today",
+                 "/api/report.csv", "/api/face-scan"}
+MANAGER_PREFIX = ("/api/students/", "/qr/")
 
 
 def norm(v):
@@ -47,6 +50,13 @@ def init_tables():
     c.execute("""CREATE TABLE IF NOT EXISTS otps(
         email TEXT PRIMARY KEY, code TEXT NOT NULL, expires BIGINT NOT NULL,
         tries INTEGER NOT NULL DEFAULT 0, last_sent BIGINT NOT NULL)""")
+    if database.PG:
+        c.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS owner_id INTEGER")
+    else:
+        try:
+            c.execute("ALTER TABLE students ADD COLUMN owner_id INTEGER")
+        except Exception:
+            pass
     email = norm(os.environ.get("ADMIN_EMAIL"))
     pw = os.environ.get("ADMIN_PASSWORD", "")
     if email and pw:
@@ -83,7 +93,7 @@ def register(app, db):
         g.user = user
         if p in AUTHED:
             return None
-        if user["role"] == "admin" and user["status"] == "approved":
+        if user["status"] == "approved" and (user["role"] == "admin" or p in MANAGER_EXACT or p.startswith(MANAGER_PREFIX)):
             return None
         return (jsonify(error="Not allowed"), 403) if api else redirect("/pending")
 
@@ -201,3 +211,4 @@ def register(app, db):
     @app.get("/auth.css")
     def auth_css():
         return send_from_directory("static", "auth.css")
+

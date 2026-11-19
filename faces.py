@@ -4,14 +4,14 @@ import threading
 
 import cv2
 import numpy as np
-from flask import jsonify, request
+from flask import g, jsonify, request
 
 THRESHOLD = float(os.environ.get("FACE_THRESHOLD", "70"))
 MAX_SAMPLES = 40
 cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 if cascade.empty():
     raise RuntimeError("Face detector file failed to load. Install opencv-contrib-python-headless<5")
-_model = {"sig": None, "rec": None}
+_models = {}
 _lock = threading.Lock()
 
 
@@ -39,27 +39,32 @@ def find_face(gray):
     return cv2.equalizeHist(face)
 
 
-def recognizer(con):
-    row = con.execute("SELECT COUNT(*) AS c, COALESCE(MAX(id), 0) AS m FROM face_samples").fetchone()
+def recognizer(con, owner):
+    if owner is None:
+        where, params = "", ()
+    else:
+        where, params = " WHERE student_id IN (SELECT id FROM students WHERE owner_id = ?)", (owner,)
+    row = con.execute("SELECT COUNT(*) AS c, COALESCE(MAX(id), 0) AS m FROM face_samples" + where, params).fetchone()
     if row["c"] == 0:
         return None
     sig = (row["c"], row["m"])
     with _lock:
-        if _model["sig"] != sig:
+        cached = _models.get(owner)
+        if not cached or cached[0] != sig:
             imgs, labels = [], []
-            for r in con.execute("SELECT student_id, img FROM face_samples").fetchall():
+            for r in con.execute("SELECT student_id, img FROM face_samples" + where, params).fetchall():
                 imgs.append(cv2.imdecode(np.frombuffer(r["img"], np.uint8), cv2.IMREAD_GRAYSCALE))
                 labels.append(r["student_id"])
             rec = cv2.face.LBPHFaceRecognizer_create()
             rec.train(imgs, np.array(labels))
-            _model.update(sig=sig, rec=rec)
-        return _model["rec"]
+            _models[owner] = (sig, rec)
+        return _models[owner][1]
 
 
-def register(app, db, mark):
+def register(app, db, mark, owns):
     @app.post("/api/students/<int:sid>/face")
     def add_face(sid):
-        if not db().execute("SELECT 1 AS x FROM students WHERE id = ?", (sid,)).fetchone():
+        if not owns(sid):
             return jsonify(error="Student not found"), 404
         n = db().execute("SELECT COUNT(*) AS c FROM face_samples WHERE student_id = ?", (sid,)).fetchone()["c"]
         if n >= MAX_SAMPLES:
@@ -74,18 +79,16 @@ def register(app, db, mark):
 
     @app.delete("/api/students/<int:sid>/face")
     def clear_face(sid):
+        if not owns(sid):
+            return jsonify(error="Student not found"), 404
         db().execute("DELETE FROM face_samples WHERE student_id = ?", (sid,))
         db().commit()
         return jsonify(ok=True)
 
-    @app.get("/api/faces")
-    def face_counts():
-        rows = db().execute("SELECT student_id, COUNT(*) AS c FROM face_samples GROUP BY student_id").fetchall()
-        return jsonify({str(r["student_id"]): r["c"] for r in rows})
-
     @app.post("/api/face-scan")
     def face_scan():
-        rec = recognizer(db())
+        owner = None if g.user["role"] == "admin" else g.user["id"]
+        rec = recognizer(db(), owner)
         if rec is None:
             return jsonify(match=False, reason="notrained")
         face = find_face(decode((request.json or {}).get("image")))

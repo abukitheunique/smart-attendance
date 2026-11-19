@@ -79,6 +79,7 @@ async function loop() {
     try {
       const r = await fetch('/api/face-scan', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: canvas.toDataURL('image/jpeg', 0.8) }) })
+      if (r.status === 401) { location.href = '/login'; return }
       handle(await r.json())
     } catch (e) { show('err', 'Server error', 'Could not reach the server') }
     busy = false
@@ -93,3 +94,4 @@ navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, h
 </script>
 </body>
 </html>
+
