@@ -1,0 +1,44 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Applications</title>
+<link rel="stylesheet" href="/auth.css" />
+</head>
+<body>
+<main class="card wide">
+  <h1>Applications</h1>
+  <p>Teachers and Sub-Directors waiting for your decision. <a class="link" style="display:inline" href="/admin">Back to dashboard</a></p>
+  <div id="list"></div>
+</main>
+<script>
+const names = { teacher: 'Teacher', subdirector: 'Sub-Director' }
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+
+async function decide(id, action) {
+  const r = await fetch('/api/applications/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) })
+  if (r.status === 401) { location.href = '/login'; return }
+  load()
+}
+
+async function load() {
+  const r = await fetch('/api/applications')
+  if (r.status === 401) { location.href = '/login'; return }
+  if (!r.ok) { location.href = '/pending'; return }
+  const rows = await r.json(), list = document.getElementById('list')
+  list.innerHTML = ''
+  if (!rows.length) { list.append(el('p', '', 'No applications yet.')); return }
+  rows.forEach((u) => {
+    const row = el('div', 'row'), who = el('div', 'who')
+    who.append(el('b', '', u.name), el('small', '', u.email + ' - ' + names[u.role] + ' - ' + new Date(u.created_at * 1000).toLocaleString()))
+    row.append(who, el('span', 'badge ' + u.status, u.status))
+    if (u.status !== 'approved') { const a = el('button', 'ok', 'Approve'); a.onclick = () => decide(u.id, 'approve'); row.append(a) }
+    if (u.status !== 'rejected') { const n = el('button', 'no', 'Reject'); n.onclick = () => decide(u.id, 'reject'); row.append(n) }
+    list.append(row)
+  })
+}
+load(); setInterval(load, 15000)
+</script>
+</body>
+</html>
