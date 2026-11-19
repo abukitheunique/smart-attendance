@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Dashboard</title>
+<link rel="stylesheet" href="/shell.css" />
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; padding: 20px 14px 40px; background: radial-gradient(circle at top, #1b2340, #070a14 70%) fixed;
@@ -51,12 +52,6 @@
 <main>
   <header>
     <div><h1><span id="role">Dashboard</span></h1><p class="who" id="who"></p></div>
-    <div class="line">
-      <a class="btn alt" href="/">QR scanner</a>
-      <a class="btn alt" href="/face">Face mode</a>
-      <a class="btn" href="/api/report.csv">Export CSV</a>
-      <button class="btn alt" id="out">Log out</button>
-    </div>
   </header>
 
   <section class="panel">
@@ -156,7 +151,7 @@ $('imp').onclick = async () => {
   } catch (x) { m.textContent = x.message }
 }
 
-$('out').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.href = '/login' }
+
 
 const today0 = new Date().toISOString().slice(0, 10)
 $('rfrom').value = today0; $('rto').value = today0
@@ -180,5 +175,6 @@ json('/api/me').then((me) => {
   load(); setInterval(load, 10000)
 })
 </script>
+<script src="/shell.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-﻿import hashlib, hmac, json, os, re, secrets, time, urllib.request
+import hashlib, hmac, os, re, secrets, time
 
 from flask import g, jsonify, redirect, request, send_from_directory, session
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -10,12 +10,13 @@ ROLES = {"teacher", "subdirector"}
 OTP_TTL, OTP_TRIES, OTP_GAP = 600, 5, 60
 HASH = "pbkdf2:sha256"
 
-PUBLIC = {"/", "/login", "/signup", "/auth.css", "/api/login", "/api/health",
+PUBLIC = {"/", "/login", "/signup", "/auth.css", "/shell.js", "/shell.css", "/api/login", "/api/health",
           "/api/signup/request", "/api/signup/verify", "/api/scan"}
 AUTHED = {"/pending", "/api/me", "/api/logout"}
 MANAGER_EXACT = {"/dashboard", "/enroll", "/face", "/api/students", "/api/today",
                  "/api/report.csv", "/api/face-scan", "/api/reports", "/api/my-reports"}
 MANAGER_PREFIX = ("/api/students/", "/qr/")
+ADMIN_BLOCKED = {"/dashboard", "/enroll", "/face"}
 
 
 def norm(v):
@@ -23,22 +24,8 @@ def norm(v):
 
 
 def send_mail(to, subject, text):
-    key = os.environ.get("RESEND_API_KEY")
-    if not key:
-        print(f"\n[DEV MAIL] to={to} | {subject}\n{text}\n", flush=True)
-        return True
-    body = json.dumps({"from": os.environ.get("MAIL_FROM", "onboarding@resend.dev"),
-                       "to": [to], "subject": subject, "text": text}).encode()
-    req = urllib.request.Request(
-        "https://api.resend.com/emails", data=body, method="POST",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
-                 "User-Agent": "smart-attendance/1.0"})
-    try:
-        urllib.request.urlopen(req, timeout=10)
-        return True
-    except Exception as e:
-        print("mail failed:", e, flush=True)
-        return False
+    print(f"\n[DEV MAIL] to={to} | {subject}\n{text}\n", flush=True)
+    return True
 
 
 def init_tables():
@@ -93,6 +80,8 @@ def register(app, db):
         g.user = user
         if p in AUTHED:
             return None
+        if user["role"] == "admin" and user["status"] == "approved" and p in ADMIN_BLOCKED:
+            return redirect("/admin")
         if user["status"] == "approved" and (user["role"] == "admin" or p in MANAGER_EXACT or p.startswith(MANAGER_PREFIX)):
             return None
         return (jsonify(error="Not allowed"), 403) if api else redirect("/pending")

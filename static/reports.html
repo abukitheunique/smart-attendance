@@ -4,34 +4,34 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Reports</title>
-<link rel="stylesheet" href="/auth.css" />
+<link rel="stylesheet" href="/shell.css" />
 </head>
 <body>
-<main class="card wide">
+<div class="page">
   <h1>Submitted reports</h1>
-  <p>CSV reports sent by Teachers and Sub-Directors. <a class="link" style="display:inline" href="/admin">Back to dashboard</a></p>
+  <p class="sub">Attendance reports sent by Teachers and Sub-Directors.</p>
   <div id="list"></div>
-</main>
+</div>
 <script>
 const names = { teacher: 'Teacher', subdirector: 'Sub-Director' }
-const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x !== undefined) e.textContent = x; return e }
 async function load() {
   const r = await fetch('/api/reports')
   if (r.status === 401) { location.href = '/login'; return }
   if (!r.ok) { location.href = '/pending'; return }
-  const rows = await r.json(), list = document.getElementById('list')
-  list.innerHTML = ''
-  if (!rows.length) { list.append(el('p', '', 'No reports yet.')); return }
+  const rows = await r.json(), list = document.getElementById('list'); list.innerHTML = ''
+  if (!rows.length) { list.append(el('p', 'muted', 'No reports yet.')); return }
   rows.forEach((x) => {
-    const row = el('div', 'row'), who = el('div', 'who')
-    who.append(el('b', '', x.sender + ' (' + (names[x.role] || x.role) + ')'),
+    const row = el('div', 'row'), w = el('div', 'who')
+    w.append(el('b', '', x.sender + ' (' + (names[x.role] || x.role) + ')'),
       el('small', '', x.from_day + ' to ' + x.to_day + ' - ' + x.rows_count + ' records - sent ' + new Date(x.created_at * 1000).toLocaleString()))
-    if (x.note) who.append(el('small', '', 'Note: ' + x.note))
-    const dl = el('a', 'btn', 'Download CSV'); dl.href = '/api/reports/' + x.id + '.csv'; dl.style.padding = '8px 14px'; dl.style.fontSize = '.85rem'
-    row.append(who, dl); list.append(row)
+    if (x.note) w.append(el('small', '', 'Note: ' + x.note))
+    const dl = el('a', 'btn', 'Download CSV'); dl.href = '/api/reports/' + x.id + '.csv'
+    row.append(w, dl); list.append(row)
   })
 }
 load(); setInterval(load, 20000)
 </script>
+<script src="/shell.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-﻿import csv, io, os, secrets
+import csv, io, os, secrets
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -77,6 +77,9 @@ auth.register(app, db)
 import reports
 
 reports.register(app, db, owner_filter)
+import people
+
+people.register(app, db)
 
 
 @app.get("/api/health")
