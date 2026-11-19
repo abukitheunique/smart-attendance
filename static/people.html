@@ -1,0 +1,54 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teachers and Sub-Directors</title>
+<link rel="stylesheet" href="/shell.css" />
+</head>
+<body>
+<div class="page">
+  <h1>Teachers &amp; Sub-Directors</h1>
+  <p class="sub">Each Sub-Director with their teachers, and each Teacher with their students. Click a row to open it.</p>
+  <input class="search" id="q" placeholder="Search by name or email..." />
+  <div id="box"></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id)
+const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x !== undefined) e.textContent = x; return e }
+let data = null
+function render() {
+  if (!data) return
+  const q = $('q').value.trim().toLowerCase(), box = $('box')
+  const open = new Set(Array.from(box.querySelectorAll('details[open]')).map((d) => d.dataset.id))
+  box.innerHTML = ''
+  ;[['subdirector', 'Sub-Directors', 'teachers'], ['teacher', 'Teachers', 'students']].forEach(([role, title, noun]) => {
+    const list = data.users.filter((u) => u.role === role && (!q || u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.people.some((p) => p.name.toLowerCase().includes(q))))
+    box.append(el('h2', 'sec', title + ' (' + list.length + ')'))
+    if (!list.length) box.append(el('p', 'muted', 'None found.'))
+    list.forEach((u) => {
+      const d = document.createElement('details'); d.className = 'acc'; d.dataset.id = u.id
+      if (q || open.has(String(u.id))) d.open = true
+      const s = document.createElement('summary'), w = el('div', 'who')
+      w.append(el('b', '', u.name), el('small', '', u.email))
+      s.append(w, el('span', 'pill', u.people.length + ' ' + noun), el('span', 'pill ok', u.present + ' present today'))
+      d.append(s)
+      const body = el('div', 'accbody')
+      if (!u.people.length) body.append(el('p', 'muted', 'No ' + noun + ' yet.'))
+      u.people.forEach((p) => { const r = el('div', 'line2'); r.append(el('span', '', p.name), el('span', 'badge ' + p.status, p.status)); body.append(r) })
+      d.append(body); box.append(d)
+    })
+  })
+}
+async function load() {
+  const r = await fetch('/api/admin/people')
+  if (r.status === 401) { location.href = '/login'; return }
+  if (!r.ok) { location.href = '/pending'; return }
+  data = await r.json(); render()
+}
+$('q').oninput = render
+load(); setInterval(load, 30000)
+</script>
+<script src="/shell.js"></script>
+</body>
+</html>
