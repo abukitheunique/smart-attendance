@@ -1,28 +1,33 @@
-﻿import csv, io, os, secrets, sqlite3
+﻿import csv, io, os, secrets, time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import qrcode
-from flask import Flask, Response, g, jsonify, redirect, request, send_file, send_from_directory, session
+from flask import (Flask, Response, g, jsonify, redirect, request, send_file,
+                   send_from_directory, session)
+
+import database
+import faces
 
 TZ = ZoneInfo(os.environ.get("TZ_NAME", "Africa/Addis_Ababa"))
 LATE_AFTER = os.environ.get("LATE_AFTER", "09:15")
-DB = os.environ.get("DB_PATH", "attendance.db")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 app = Flask(__name__, static_folder=None)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
+    MAX_CONTENT_LENGTH=4 * 1024 * 1024,
 )
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+
+database.init()
 
 
 def db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = database.Conn()
     return g.db
 
 
@@ -33,34 +38,63 @@ def close_db(_):
         con.close()
 
 
-def init():
-    con = sqlite3.connect(DB)
-    con.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS students(
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          code TEXT UNIQUE NOT NULL,
-          name TEXT NOT NULL,
-          created TEXT DEFAULT CURRENT_TIMESTAMP);
-        CREATE TABLE IF NOT EXISTS attendance(
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-          day TEXT NOT NULL,
-          time TEXT NOT NULL,
-          status TEXT NOT NULL,
-          UNIQUE(student_id, day));
-        """
+def mark(sid):
+    now = datetime.now(TZ)
+    day, t = now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
+    status = "late" if t > LATE_AFTER else "present"
+    cur = db().execute(
+        "INSERT INTO attendance(student_id, day, time, status) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (student_id, day) DO NOTHING",
+        (sid, day, t, status),
     )
-    con.commit()
-    con.close()
+    db().commit()
+    if cur.rowcount == 0:
+        old = db().execute(
+            "SELECT time, status FROM attendance WHERE student_id = ? AND day = ?", (sid, day)
+        ).fetchone()
+        return True, old["time"], old["status"]
+    return False, t, status
 
 
-init()
+faces.register(app, db, mark)
+
+PUBLIC = {"/", "/face", "/login", "/api/scan", "/api/face-scan", "/api/health", "/api/login"}
+
+
+@app.before_request
+def guard():
+    if request.path in PUBLIC or session.get("admin"):
+        return None
+    if request.path.startswith(("/api/", "/qr/")):
+        return jsonify(error="Login required"), 401
+    return redirect("/login")
+
+
+@app.post("/api/login")
+def login():
+    if not ADMIN_PASSWORD:
+        return jsonify(error="ADMIN_PASSWORD is not set on the server"), 503
+    pw = str((request.json or {}).get("password", ""))
+    if not secrets.compare_digest(pw.encode(), ADMIN_PASSWORD.encode()):
+        time.sleep(1)
+        return jsonify(error="Wrong password"), 401
+    session["admin"] = True
+    return jsonify(ok=True)
+
+
+@app.post("/api/logout")
+def logout():
+    session.clear()
+    return jsonify(ok=True)
 
 
 @app.get("/api/health")
 def health():
-    return jsonify(ok=True)
+    try:
+        db().execute("SELECT 1 AS x").fetchone()
+        return jsonify(ok=True, database="postgres" if database.PG else "sqlite")
+    except Exception:
+        return jsonify(ok=False), 503
 
 
 @app.get("/api/students")
@@ -75,9 +109,9 @@ def add_student():
     if not 2 <= len(name) <= 80:
         return jsonify(error="Name must be 2-80 characters"), 400
     code = secrets.token_hex(6)
-    cur = db().execute("INSERT INTO students(code, name) VALUES (?, ?)", (code, name))
+    row = db().execute("INSERT INTO students(code, name) VALUES (?, ?) RETURNING id", (code, name)).fetchone()
     db().commit()
-    return jsonify(id=cur.lastrowid, code=code, name=name), 201
+    return jsonify(id=row["id"], code=code, name=name), 201
 
 
 @app.delete("/api/students/<int:sid>")
@@ -102,20 +136,8 @@ def scan():
     s = db().execute("SELECT id, name FROM students WHERE code = ?", (code,)).fetchone()
     if not s:
         return jsonify(error="Unknown code"), 404
-    now = datetime.now(TZ)
-    day, t = now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
-    status = "late" if t > LATE_AFTER else "present"
-    cur = db().execute(
-        "INSERT OR IGNORE INTO attendance(student_id, day, time, status) VALUES (?, ?, ?, ?)",
-        (s["id"], day, t, status),
-    )
-    db().commit()
-    if cur.rowcount == 0:
-        old = db().execute(
-            "SELECT time, status FROM attendance WHERE student_id = ? AND day = ?", (s["id"], day)
-        ).fetchone()
-        return jsonify(ok=True, already=True, name=s["name"], time=old["time"], status=old["status"])
-    return jsonify(ok=True, already=False, name=s["name"], time=t, status=status)
+    already, t, status = mark(s["id"])
+    return jsonify(ok=True, already=already, name=s["name"], time=t, status=status)
 
 
 @app.get("/api/today")
@@ -132,6 +154,11 @@ def today():
     return jsonify(day=day, counts=counts, people=people)
 
 
+def safe(v):
+    v = str(v)
+    return "'" + v if v[:1] in ("=", "+", "-", "@") else v
+
+
 @app.get("/api/report.csv")
 def report():
     start = request.args.get("from", "0000-01-01")
@@ -145,7 +172,7 @@ def report():
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(["name", "day", "time", "status"])
-    w.writerows([tuple(r) for r in rows])
+    w.writerows([[safe(r["name"]), r["day"], r["time"], r["status"]] for r in rows])
     return Response(
         out.getvalue(),
         mimetype="text/csv",
@@ -163,46 +190,6 @@ def admin():
     return send_from_directory("static", "admin.html")
 
 
-import faces
-
-faces.register(app, db, DB, TZ, LATE_AFTER)
-
-PUBLIC = {"/", "/face", "/login", "/api/scan", "/api/face-scan", "/api/health", "/api/login"}
-
-
-@app.before_request
-def guard():
-    if request.path in PUBLIC or session.get("admin"):
-        return None
-    if request.path.startswith(("/api/", "/qr/")):
-        return jsonify(error="Login required"), 401
-    return redirect("/login")
-
-
-@app.post("/api/login")
-def login():
-    import time
-    if not ADMIN_PASSWORD:
-        return jsonify(error="ADMIN_PASSWORD is not set on the server"), 503
-    pw = str((request.json or {}).get("password", ""))
-    if not secrets.compare_digest(pw.encode(), ADMIN_PASSWORD.encode()):
-        time.sleep(1)
-        return jsonify(error="Wrong password"), 401
-    session["admin"] = True
-    return jsonify(ok=True)
-
-
-@app.post("/api/logout")
-def logout():
-    session.clear()
-    return jsonify(ok=True)
-
-
-@app.get("/login")
-def login_page():
-    return send_from_directory("static", "login.html")
-
-
 @app.get("/face")
 def face_kiosk():
     return send_from_directory("static", "face.html")
@@ -213,8 +200,10 @@ def enroll_page():
     return send_from_directory("static", "enroll.html")
 
 
+@app.get("/login")
+def login_page():
+    return send_from_directory("static", "login.html")
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
