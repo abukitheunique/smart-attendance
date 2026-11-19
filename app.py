@@ -1,17 +1,19 @@
-﻿import csv, io, os, secrets, time
+﻿import csv, io, os, secrets
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import qrcode
-from flask import (Flask, Response, g, jsonify, redirect, request, send_file,
-                   send_from_directory, session)
+from flask import (Flask, Response, g, jsonify, request, send_file,
+                   send_from_directory)
 
+import auth
 import database
 import faces
 
 TZ = ZoneInfo(os.environ.get("TZ_NAME", "Africa/Addis_Ababa"))
 LATE_AFTER = os.environ.get("LATE_AFTER", "09:15")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+MAX_IMPORT = 500
+HEADERS = {"name", "names", "full name", "fullname", "student", "students", "teacher", "teachers"}
 
 app = Flask(__name__, static_folder=None)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
@@ -38,6 +40,20 @@ def close_db(_):
         con.close()
 
 
+def owner_filter(alias=""):
+    """SQL to AND into a WHERE clause: admins see everyone, others only their own list."""
+    if g.user["role"] == "admin":
+        return "", ()
+    col = f"{alias}.owner_id" if alias else "owner_id"
+    return f" AND {col} = ?", (g.user["id"],)
+
+
+def owns(sid):
+    f, p = owner_filter()
+    row = db().execute("SELECT 1 AS x FROM students WHERE id = ?" + f, (sid,) + p).fetchone()
+    return row is not None
+
+
 def mark(sid):
     now = datetime.now(TZ)
     day, t = now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
@@ -56,10 +72,7 @@ def mark(sid):
     return False, t, status
 
 
-faces.register(app, db, mark)
-
-import auth
-
+faces.register(app, db, mark, owns)
 auth.register(app, db)
 
 
@@ -74,7 +87,8 @@ def health():
 
 @app.get("/api/students")
 def list_students():
-    rows = db().execute("SELECT id, code, name FROM students ORDER BY name").fetchall()
+    f, p = owner_filter()
+    rows = db().execute("SELECT id, code, name FROM students WHERE 1 = 1" + f + " ORDER BY name", p).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -84,20 +98,54 @@ def add_student():
     if not 2 <= len(name) <= 80:
         return jsonify(error="Name must be 2-80 characters"), 400
     code = secrets.token_hex(6)
-    row = db().execute("INSERT INTO students(code, name) VALUES (?, ?) RETURNING id", (code, name)).fetchone()
+    row = db().execute(
+        "INSERT INTO students(code, name, owner_id) VALUES (?, ?, ?) RETURNING id",
+        (code, name, g.user["id"]),
+    ).fetchone()
     db().commit()
     return jsonify(id=row["id"], code=code, name=name), 201
 
 
+@app.post("/api/students/import")
+def import_students():
+    text = str((request.json or {}).get("csv", "")).lstrip("\ufeff")
+    rows = [r for r in csv.reader(io.StringIO(text)) if r and r[0].strip()]
+    if rows and rows[0][0].strip().lower() in HEADERS:
+        rows = rows[1:]
+    if not rows:
+        return jsonify(error="No names found in the file"), 400
+    if len(rows) > MAX_IMPORT:
+        return jsonify(error=f"Too many rows (max {MAX_IMPORT})"), 400
+    uid = g.user["id"]
+    have = {r["name"].lower() for r in db().execute(
+        "SELECT name FROM students WHERE owner_id = ?", (uid,)).fetchall()}
+    added = skipped = 0
+    for r in rows:
+        name = r[0].strip()
+        if not 2 <= len(name) <= 80 or name.lower() in have:
+            skipped += 1
+            continue
+        have.add(name.lower())
+        db().execute("INSERT INTO students(code, name, owner_id) VALUES (?, ?, ?)",
+                     (secrets.token_hex(6), name, uid))
+        added += 1
+    db().commit()
+    return jsonify(ok=True, added=added, skipped=skipped)
+
+
 @app.delete("/api/students/<int:sid>")
 def delete_student(sid):
-    db().execute("DELETE FROM students WHERE id = ?", (sid,))
+    f, p = owner_filter()
+    db().execute("DELETE FROM students WHERE id = ?" + f, (sid,) + p)
     db().commit()
     return jsonify(ok=True)
 
 
 @app.get("/qr/<code>.png")
 def qr_image(code):
+    f, p = owner_filter()
+    if not db().execute("SELECT 1 AS x FROM students WHERE code = ?" + f, (code,) + p).fetchone():
+        return jsonify(error="Not found"), 404
     img = qrcode.make(code, box_size=10, border=4)
     buf = io.BytesIO()
     img.save(buf, "PNG")
@@ -118,14 +166,15 @@ def scan():
 @app.get("/api/today")
 def today():
     day = datetime.now(TZ).strftime("%Y-%m-%d")
+    f, p = owner_filter("s")
     rows = db().execute(
         """SELECT s.id, s.name, a.time, COALESCE(a.status, 'absent') AS status
            FROM students s LEFT JOIN attendance a ON a.student_id = s.id AND a.day = ?
-           ORDER BY s.name""",
-        (day,),
+           WHERE 1 = 1""" + f + " ORDER BY s.name",
+        (day,) + p,
     ).fetchall()
     people = [dict(r) for r in rows]
-    counts = {k: sum(1 for p in people if p["status"] == k) for k in ("present", "late", "absent")}
+    counts = {k: sum(1 for x in people if x["status"] == k) for k in ("present", "late", "absent")}
     return jsonify(day=day, counts=counts, people=people)
 
 
@@ -138,11 +187,12 @@ def safe(v):
 def report():
     start = request.args.get("from", "0000-01-01")
     end = request.args.get("to", "9999-12-31")
+    f, p = owner_filter("s")
     rows = db().execute(
         """SELECT s.name, a.day, a.time, a.status FROM attendance a
            JOIN students s ON s.id = a.student_id
-           WHERE a.day BETWEEN ? AND ? ORDER BY a.day DESC, s.name""",
-        (start, end),
+           WHERE a.day BETWEEN ? AND ?""" + f + " ORDER BY a.day DESC, s.name",
+        (start, end) + p,
     ).fetchall()
     out = io.StringIO()
     w = csv.writer(out)
@@ -155,31 +205,39 @@ def report():
     )
 
 
+def page(name):
+    return send_from_directory("static", name)
+
+
 @app.get("/")
 def kiosk():
-    return send_from_directory("static", "index.html")
+    return page("index.html")
 
 
 @app.get("/admin")
 def admin():
-    return send_from_directory("static", "admin.html")
+    return page("admin.html")
+
+
+@app.get("/dashboard")
+def dashboard():
+    return page("dashboard.html")
 
 
 @app.get("/face")
 def face_kiosk():
-    return send_from_directory("static", "face.html")
+    return page("face.html")
 
 
 @app.get("/enroll")
 def enroll_page():
-    return send_from_directory("static", "enroll.html")
+    return page("enroll.html")
 
 
 @app.get("/login")
 def login_page():
-    return send_from_directory("static", "login.html")
+    return page("login.html")
 
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-

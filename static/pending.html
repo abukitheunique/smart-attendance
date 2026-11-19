@@ -17,6 +17,7 @@ const roles = { teacher: 'Teacher', subdirector: 'Sub-Director' }
 fetch('/api/me').then((r) => (r.status === 401 ? (location.href = '/login', null) : r.json())).then((me) => {
   if (!me) return
   if (me.role === 'admin') { location.href = '/admin'; return }
+  if (me.status === 'approved') { location.href = '/dashboard'; return }
   const t = document.getElementById('title'), p = document.getElementById('text')
   if (me.status === 'pending') { t.textContent = 'Application under review'; p.textContent = 'Hello ' + me.name + '. Your ' + roles[me.role] + ' application was sent to the Admin. You get access after it is approved.' }
   else if (me.status === 'approved') { t.textContent = 'Approved'; p.textContent = 'Your ' + roles[me.role] + ' account is approved. Your dashboard is the next feature we are building.' }
@@ -26,3 +27,4 @@ document.getElementById('out').onclick = async () => { await fetch('/api/logout'
 </script>
 </body>
 </html>
+
