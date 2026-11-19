@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -82,6 +82,17 @@
     </section>
   </div>
 
+  <section class="panel" id="sendPanel">
+    <h2>Send report to Admin</h2>
+    <div class="line">
+      <input type="date" id="rfrom" /><input type="date" id="rto" />
+      <input type="text" id="rnote" placeholder="Note (optional)" maxlength="300" />
+      <button class="btn" id="rsend">Send to Admin</button>
+    </div>
+    <p class="msg" id="rmsg"></p>
+    <ul id="rlist"></ul>
+  </section>
+
   <section class="panel">
     <h2 id="title">Today</h2>
     <ul id="list"></ul>
@@ -147,10 +158,25 @@ $('imp').onclick = async () => {
 
 $('out').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.href = '/login' }
 
+const today0 = new Date().toISOString().slice(0, 10)
+$('rfrom').value = today0; $('rto').value = today0
+async function loadReports() {
+  const rows = await json('/api/my-reports'), ul = $('rlist'); ul.innerHTML = ''
+  rows.slice(0, 5).forEach((x) => { const li = el('li'); li.append(el('span', 'name', x.from_day + ' to ' + x.to_day + ' (' + x.rows_count + ' records)'), el('span', 'time', new Date(x.created_at * 1000).toLocaleString())); ul.append(li) })
+}
+$('rsend').onclick = async () => {
+  const m = $('rmsg'); m.className = 'msg'; m.textContent = ''
+  try {
+    const d = await json('/api/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: $('rfrom').value, to: $('rto').value, note: $('rnote').value }) })
+    m.className = 'msg ok'; m.textContent = 'Sent ' + d.rows + ' records to the Admin.'; $('rnote').value = ''; loadReports()
+  } catch (x) { m.textContent = x.message }
+}
+
 json('/api/me').then((me) => {
   const l = labels[me.role] || labels.admin
   $('role').textContent = l[0]; $('who').textContent = me.name + ' - ' + me.email
   noun = [l[1], l[2]]; $('addTitle').textContent = 'Add one ' + l[1]
+  if (me.role === 'admin') $('sendPanel').remove(); else loadReports()
   load(); setInterval(load, 10000)
 })
 </script>

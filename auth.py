@@ -14,7 +14,7 @@ PUBLIC = {"/", "/login", "/signup", "/auth.css", "/api/login", "/api/health",
           "/api/signup/request", "/api/signup/verify", "/api/scan"}
 AUTHED = {"/pending", "/api/me", "/api/logout"}
 MANAGER_EXACT = {"/dashboard", "/enroll", "/face", "/api/students", "/api/today",
-                 "/api/report.csv", "/api/face-scan"}
+                 "/api/report.csv", "/api/face-scan", "/api/reports", "/api/my-reports"}
 MANAGER_PREFIX = ("/api/students/", "/qr/")
 
 
@@ -211,4 +211,5 @@ def register(app, db):
     @app.get("/auth.css")
     def auth_css():
         return send_from_directory("static", "auth.css")
+
 

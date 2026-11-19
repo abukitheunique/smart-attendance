@@ -74,6 +74,9 @@ def mark(sid):
 
 faces.register(app, db, mark, owns)
 auth.register(app, db)
+import reports
+
+reports.register(app, db, owner_filter)
 
 
 @app.get("/api/health")
@@ -241,3 +244,4 @@ def login_page():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
