@@ -1,0 +1,63 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Apply</title>
+<link rel="stylesheet" href="/auth.css" />
+</head>
+<body>
+<main class="card">
+  <h1>Apply for <span>access</span></h1>
+  <p id="sub">Enter your email. We send a 6-digit code to confirm it.</p>
+
+  <form id="f1">
+    <input id="email" type="email" placeholder="Email" required autofocus />
+    <button>Send code</button>
+    <p class="err" id="e1"></p>
+  </form>
+
+  <form id="f2" hidden>
+    <label>Verification code</label>
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="123456" required />
+    <label>Full name</label>
+    <input id="name" maxlength="80" required />
+    <label>I am a</label>
+    <select id="role"><option value="teacher">Teacher</option><option value="subdirector">Sub-Director</option></select>
+    <label>Create a password (8+ characters)</label>
+    <input id="pw" type="password" minlength="8" autocomplete="new-password" required />
+    <input id="pw2" type="password" minlength="8" placeholder="Repeat password" autocomplete="new-password" required />
+    <button>Send application</button>
+    <button type="button" class="alt" id="back">Use another email</button>
+    <p class="err" id="e2"></p>
+  </form>
+  <a class="link" href="/login">Already applied? Log in</a>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const d = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(d.error || 'Request failed')
+  return d
+}
+$('f1').onsubmit = async (e) => {
+  e.preventDefault(); $('e1').textContent = ''
+  try {
+    await post('/api/signup/request', { email: $('email').value })
+    $('f1').hidden = true; $('f2').hidden = false
+    $('sub').textContent = 'If this email can be used, a code was sent to ' + $('email').value + '.'
+  } catch (x) { $('e1').textContent = x.message }
+}
+$('back').onclick = () => { $('f2').hidden = true; $('f1').hidden = false; $('sub').textContent = 'Enter your email. We send a 6-digit code to confirm it.' }
+$('f2').onsubmit = async (e) => {
+  e.preventDefault(); $('e2').textContent = ''
+  if ($('pw').value !== $('pw2').value) { $('e2').textContent = 'Passwords do not match'; return }
+  try {
+    await post('/api/signup/verify', { email: $('email').value, code: $('code').value, name: $('name').value, role: $('role').value, password: $('pw').value })
+    location.href = '/pending'
+  } catch (x) { $('e2').textContent = x.message }
+}
+</script>
+</body>
+</html>

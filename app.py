@@ -58,34 +58,9 @@ def mark(sid):
 
 faces.register(app, db, mark)
 
-PUBLIC = {"/", "/face", "/login", "/api/scan", "/api/face-scan", "/api/health", "/api/login"}
+import auth
 
-
-@app.before_request
-def guard():
-    if request.path in PUBLIC or session.get("admin"):
-        return None
-    if request.path.startswith(("/api/", "/qr/")):
-        return jsonify(error="Login required"), 401
-    return redirect("/login")
-
-
-@app.post("/api/login")
-def login():
-    if not ADMIN_PASSWORD:
-        return jsonify(error="ADMIN_PASSWORD is not set on the server"), 503
-    pw = str((request.json or {}).get("password", ""))
-    if not secrets.compare_digest(pw.encode(), ADMIN_PASSWORD.encode()):
-        time.sleep(1)
-        return jsonify(error="Wrong password"), 401
-    session["admin"] = True
-    return jsonify(ok=True)
-
-
-@app.post("/api/logout")
-def logout():
-    session.clear()
-    return jsonify(ok=True)
+auth.register(app, db)
 
 
 @app.get("/api/health")
@@ -207,3 +182,4 @@ def login_page():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+

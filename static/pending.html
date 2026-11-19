@@ -1,0 +1,28 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Application status</title>
+<link rel="stylesheet" href="/auth.css" />
+</head>
+<body>
+<main class="card">
+  <h1 id="title">Loading...</h1>
+  <p id="text"></p>
+  <button class="alt" id="out">Log out</button>
+</main>
+<script>
+const roles = { teacher: 'Teacher', subdirector: 'Sub-Director' }
+fetch('/api/me').then((r) => (r.status === 401 ? (location.href = '/login', null) : r.json())).then((me) => {
+  if (!me) return
+  if (me.role === 'admin') { location.href = '/admin'; return }
+  const t = document.getElementById('title'), p = document.getElementById('text')
+  if (me.status === 'pending') { t.textContent = 'Application under review'; p.textContent = 'Hello ' + me.name + '. Your ' + roles[me.role] + ' application was sent to the Admin. You get access after it is approved.' }
+  else if (me.status === 'approved') { t.textContent = 'Approved'; p.textContent = 'Your ' + roles[me.role] + ' account is approved. Your dashboard is the next feature we are building.' }
+  else { t.textContent = 'Application not approved'; p.textContent = 'The Admin did not approve this application.' }
+})
+document.getElementById('out').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.href = '/login' }
+</script>
+</body>
+</html>
